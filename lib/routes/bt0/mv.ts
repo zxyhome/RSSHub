@@ -1,7 +1,8 @@
-import { Route } from '@/types';
-import { load } from 'cheerio';
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import { doGot, genSize } from './util';
+import type { Route } from '@/types';
+import { parseDate } from '@/utils/parse-date';
+
+import { genSize, getApiData } from './util';
 
 export const route: Route = {
     path: '/mv/:number/:domain?',
@@ -18,7 +19,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['2bt0.com/mv/'],
+            source: ['2bt0.com/mv/:number'],
         },
     ],
     name: '影视资源下载列表',
@@ -38,31 +39,30 @@ async function handler(ctx) {
     }
 
     const host = `https://www.${domain}bt0.com`;
-    const _link = `${host}/mv/${number}.html`;
-
-    const $ = load(await doGot(0, host, _link));
-    const name = $('span.info-title.lh32').text();
-    const items = $('div.container .container .col-md-10.tex_l')
-        .toArray()
-        .map((item) => {
-            item = $(item);
-            const torrent_info = item.find('.torrent-title').first();
-            const _title = torrent_info.text();
-            const len = item.find('.tag-sm.tag-size.text-center').first().text();
-            return {
-                title: _title,
-                guid: _title,
-                description: `${_title}[${len}]`,
-                link: host + torrent_info.attr('href'),
-                pubDate: item.find('.tag-sm.tag-download.text-center').eq(1).text(),
-                enclosure_type: 'application/x-bittorrent',
-                enclosure_url: item.find('.col-md-3 a').first().attr('href'),
-                enclosure_length: genSize(len),
-            };
-        });
+    const data = await getApiData(host, 'getVideoDetail', { id: number });
+    if (data.need_vip && Object.values<any[]>(data.ecca).every((resources) => !resources.length)) {
+        throw new Error('BT0 requires a site subscription to list resources for this movie. The public latest-resources route /bt0/tlist/1 is still available.');
+    }
+    const items = Object.values<any[]>(data.ecca).flatMap((item) =>
+        item.map((i) => ({
+            title: i.zname,
+            guid: `bt0:resource:${i.id}`,
+            description: `文件大小：${i.zsize}`,
+            link: `${host}/tr/${i.id}.html`,
+            pubDate: i.ezt ? parseDate(i.ezt, 'X') : undefined,
+            enclosure_type: 'application/x-bittorrent',
+            enclosure_url: i.zlink,
+            enclosure_length: genSize(i.zsize),
+            category: strsJoin(i.zqxd, i.text_html, i.audio_html, i.new === 1 ? '新' : ''),
+        }))
+    );
     return {
-        title: name,
-        link: _link,
+        title: data.title,
+        link: `${host}/mv/${number}.html`,
         item: items,
     };
+}
+
+function strsJoin(...strings) {
+    return strings.filter((str) => str !== '').join(',');
 }

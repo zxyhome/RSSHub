@@ -1,21 +1,22 @@
-import { Route } from '@/types';
-import { load } from 'cheerio';
 import InvalidParameterError from '@/errors/types/invalid-parameter';
-import { doGot, genSize } from './util';
+import type { Route } from '@/types';
+import { parseDate, parseRelativeDate } from '@/utils/parse-date';
+
+import { genSize, getApiData } from './util';
 
 const categoryDict = {
     1: '电影',
     2: '电视剧',
-    3: '周热门',
-    4: '月热门',
-    5: '年度热门',
+    3: '近日热门',
+    4: '本周热门',
+    5: '本月热门',
 };
 
 export const route: Route = {
     path: '/tlist/:sc/:domain?',
     categories: ['multimedia'],
     example: '/bt0/tlist/1',
-    parameters: { sc: '分类(1-5), 1:电影, 2:电视剧, 3:周热门, 4:月热门, 5:年度热门', domain: '数字1-9, 比如1表示请求域名为 1bt0.com, 默认为 2' },
+    parameters: { sc: '分类(1-5), 1:电影, 2:电视剧, 3:近日热门, 4:本周热门, 5:本月热门', domain: '数字1-9, 比如1表示请求域名为 1bt0.com, 默认为 2' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -24,11 +25,10 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    radar: [
-        {
-            source: ['2bt0.com/tlist/'],
-        },
-    ],
+    radar: Object.keys(categoryDict).map((sc) => ({
+        source: [`2bt0.com/tlist/${sc}_1.html`],
+        target: `/tlist/${sc}`,
+    })),
     name: '最新资源列表',
     maintainers: ['miemieYaho'],
     handler,
@@ -45,30 +45,21 @@ async function handler(ctx) {
     }
 
     const host = `https://www.${domain}bt0.com`;
-    const _link = `${host}/tlist.php?sc=${sc}`;
-
-    const $ = load(await doGot(0, host, _link));
-    const items = $('div.left.bf100.hig90.ov_hid.po_rel.trall3.dou3')
-        .toArray()
-        .map((item) => {
-            item = $(item);
-            const ah = item.find('a');
-            const _title = ah.eq(1).text();
-            const ds = item.find('.huise2.fs12 .left');
-            return {
-                title: _title,
-                guid: _title,
-                description: `${ds.eq(0).text()}  ${ds.eq(1).text()}<br>${ds.eq(2).text()}<br>${ds.eq(3).text()}<br>${ds.eq(4).text()}`,
-                link: host + ah.eq(1).attr('href'),
-                pubDate: item.find('.bghuise9').first().text(),
-                enclosure_type: 'application/x-bittorrent',
-                enclosure_url: ah.eq(2).attr('href'),
-                enclosure_length: genSize(item.find('.marl10.bgzise').first().text()),
-            };
-        });
+    const data = await getApiData(host, 'getTList', { sc, page: 1 });
+    const items = data.list.map((item) => ({
+        title: item.zname,
+        guid: `bt0:resource:${item.id}`,
+        description: `《${item.title}》  导演: ${item.daoyan}<br>编剧: ${item.bianji}<br>演员: ${item.yanyuan}<br>简介: ${item.conta.trim()}`,
+        link: host + item.aurl,
+        pubDate: item.ezt ? parseDate(item.ezt, 'X') : item.eztime.endsWith('前') ? parseRelativeDate(item.eztime) : item.eztime,
+        enclosure_type: 'application/x-bittorrent',
+        enclosure_url: item.zlink,
+        enclosure_length: genSize(item.zsize),
+        itunes_item_image: item.epic,
+    }));
     return {
         title: `不太灵-最新资源列表-${categoryDict[sc]}`,
-        link: _link,
+        link: `${host}/tlist/${sc}_1.html`,
         item: items,
     };
 }
